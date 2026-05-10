@@ -26,6 +26,9 @@ Environment variables (all optional):
   CLAUDE_ITERM2_TAB_STATUS_PREFIX_RUNNING   Running prefix (default: "⚡ ")
   CLAUDE_ITERM2_TAB_STATUS_PREFIX_IDLE      Idle prefix (default: "💤 ")
   CLAUDE_ITERM2_TAB_STATUS_PREFIX_ATTENTION Attention prefix (default: "🔴 ")
+  CLAUDE_ITERM2_TAB_STATUS_DISPLAY_TARGET   Display target title/subtitle/both (default: title)
+  CLAUDE_ITERM2_TAB_STATUS_SUBTITLE_ACTIVITY_SOURCE
+                                                Subtitle activity off/prompt (default: off)
   CLAUDE_ITERM2_TAB_STATUS_BADGE            Badge text (default: "⚠️ Needs input")
   CLAUDE_ITERM2_TAB_STATUS_BADGE_ENABLED    Enable/disable badge true/false (default: true)
   CLAUDE_ITERM2_TAB_STATUS_NOTIFY           macOS notification true/false (default: false)
@@ -39,12 +42,13 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 
 # --- Configuration ---
 
@@ -63,6 +67,8 @@ _DEFAULTS: dict[str, object] = {
     "badge": "⚠️ Needs input",
     "notify": False,
     "sound": "",
+    "display_target": "title",
+    "subtitle_activity_source": "off",
 }
 
 _ENV_MAP: dict[str, tuple[str, type]] = {
@@ -78,7 +84,30 @@ _ENV_MAP: dict[str, tuple[str, type]] = {
     "badge": ("BADGE", str),
     "notify": ("NOTIFY", lambda v: v.lower() == "true"),
     "sound": ("SOUND", str),
+    "display_target": ("DISPLAY_TARGET", str),
+    "subtitle_activity_source": ("SUBTITLE_ACTIVITY_SOURCE", str),
 }
+
+_DISPLAY_TARGETS = {"title", "subtitle", "both"}
+_SUBTITLE_ACTIVITY_SOURCES = {"off", "prompt"}
+
+
+def _normalize_display_target(value: object) -> str:
+    """Return a supported display target, defaulting to title."""
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in _DISPLAY_TARGETS:
+            return normalized
+    return "title"
+
+
+def _normalize_subtitle_activity_source(value: object) -> str:
+    """Return a supported subtitle activity source, defaulting to off."""
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in _SUBTITLE_ACTIVITY_SOURCES:
+            return normalized
+    return "off"
 
 
 def load_config(config_path: str | None = None) -> dict[str, object]:
@@ -103,6 +132,11 @@ def load_config(config_path: str | None = None) -> dict[str, object]:
                 cfg[key] = converter(env_val)
             except (ValueError, TypeError):
                 pass
+
+    cfg["display_target"] = _normalize_display_target(cfg.get("display_target"))
+    cfg["subtitle_activity_source"] = _normalize_subtitle_activity_source(
+        cfg.get("subtitle_activity_source")
+    )
 
     return cfg
 
@@ -387,6 +421,149 @@ def set_state_prefix(name: str, prefix: str) -> str:
     return prefix + strip_all_prefixes(name)
 
 
+_SUBTITLE_VARIABLE = "user.claudeStatus"
+_ACTIVITY_MAX_CHARS = 18
+_ACTIVITY_MAX_WORDS = 2
+_ACTIVITY_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "about",
+    "can",
+    "for",
+    "in",
+    "me",
+    "my",
+    "of",
+    "on",
+    "our",
+    "please",
+    "the",
+    "this",
+    "to",
+    "with",
+    "you",
+}
+_ACTIVITY_VERBS = {
+    "debugging": "debug",
+    "editing": "edit",
+    "fixing": "fix",
+    "implementing": "implement",
+    "planning": "plan",
+    "reviewing": "review",
+    "running": "run",
+    "testing": "test",
+    "updating": "update",
+    "writing": "write",
+}
+_ACTIVITY_ACRONYMS = {"api", "pr", "url"}
+_SENSITIVE_ACTIVITY_RE = re.compile(
+    r"(?i)\b(password|passwd|passphrase|secret|token|api[-_ ]?key|private[-_ ]?key|"
+    r"credential|bearer|cookie)\b\s*[:=]?"
+)
+
+
+def _should_update_title(display_target: object | None = None) -> bool:
+    """Return whether the current target should update the tab title."""
+    target = _normalize_display_target(display_target or CONFIG.get("display_target"))
+    return target in {"title", "both"}
+
+
+def _should_update_subtitle(display_target: object | None = None) -> bool:
+    """Return whether the current target should update the subtitle variable."""
+    target = _normalize_display_target(display_target or CONFIG.get("display_target"))
+    return target in {"subtitle", "both"}
+
+
+def _activity_word(word: str, index: int) -> str:
+    """Format one sanitized activity word for compact display."""
+    normalized = _ACTIVITY_VERBS.get(word.lower(), word.lower())
+    if normalized in _ACTIVITY_ACRONYMS:
+        return normalized.upper()
+    if index == 0:
+        return normalized.capitalize()
+    return normalized
+
+
+def _activity_snippet(text: object) -> str:
+    """Convert opt-in prompt text into a compact, privacy-conscious snippet."""
+    if not isinstance(text, str):
+        return ""
+    if _SENSITIVE_ACTIVITY_RE.search(text):
+        return ""
+
+    cleaned = re.sub(r"https?://\S+|www\.\S+", " link ", text)
+    cleaned = re.sub(r"\b\S+@\S+\.\S+\b", " email ", cleaned)
+    cleaned = re.sub(r"(?:~|/)[^\s]+", " file ", cleaned)
+    cleaned = re.sub(r"(?i)\bpull\s+request\b", " PR ", cleaned)
+    cleaned = re.sub(r"[\r\n\t]+", " ", cleaned)
+    cleaned = re.sub(r"[^A-Za-z0-9#]+", " ", cleaned)
+
+    words = [word for word in cleaned.split() if word.lower() not in _ACTIVITY_STOP_WORDS]
+    if not words:
+        return ""
+
+    formatted_words: list[str] = []
+    for word in words:
+        candidate = _activity_word(word, len(formatted_words))
+        candidate_words = formatted_words + [candidate]
+        candidate_text = " ".join(candidate_words)
+        if len(candidate_words) > _ACTIVITY_MAX_WORDS or len(candidate_text) > _ACTIVITY_MAX_CHARS:
+            break
+        formatted_words.append(candidate)
+
+    return " ".join(formatted_words)
+
+
+def _subtitle_status_text(prefix: str, signal: dict | None = None) -> str:
+    """Convert a title prefix into compact subtitle text."""
+    status = prefix.strip()
+    if _normalize_subtitle_activity_source(CONFIG.get("subtitle_activity_source")) != "prompt":
+        return status
+
+    activity = (signal or {}).get("activity", "")
+    snippet = _activity_snippet(activity)
+    if not snippet:
+        return status
+    return f"{status} {snippet}" if status else snippet
+
+
+def _signal_display_signature(signal: dict) -> tuple[object, object]:
+    """Return fields that affect visible status display."""
+    return (signal.get("type"), signal.get("activity", ""))
+
+
+async def _set_subtitle_status(session: object, status_text: str) -> None:
+    """Set the fixed iTerm2 user variable used by profile subtitles."""
+    try:
+        await session.async_set_variable(_SUBTITLE_VARIABLE, status_text)  # type: ignore[union-attr]
+    except Exception:
+        log.debug("session.async_set_variable failed for subtitle status")
+
+
+async def _clear_subtitle_status(session: object) -> None:
+    """Clear the fixed iTerm2 user variable used by profile subtitles."""
+    await _set_subtitle_status(session, "")
+
+
+async def _apply_status_display(
+    info: dict,
+    prefix: str,
+    signal: dict,
+    set_title: Callable[[dict, str], Awaitable[None]],
+) -> None:
+    """Apply status to the configured display target."""
+    if _should_update_title():
+        await set_title(info, prefix)
+    if _should_update_subtitle():
+        await _set_subtitle_status(info["session"], _subtitle_status_text(prefix, signal))
+
+
+async def _clear_status_display(info: dict) -> None:
+    """Clear status display state that may outlive a signal file."""
+    await _clear_subtitle_status(info["session"])
+
+
 def add_title_prefix(name: str, prefix: str) -> str:
     """Add prefix to name if not already present."""
     if name.startswith(prefix):
@@ -528,8 +705,7 @@ async def main(connection: object) -> None:
         info["state"] = state
         prefix = _STATE_PREFIXES[state]
 
-        # ALL states: set title prefix
-        await _set_tab_title(info, prefix)
+        await _apply_status_display(info, prefix, signal, _set_tab_title)
 
         # ATTENTION only: badge, flash, notification
         if state == TabState.ATTENTION:
@@ -615,6 +791,8 @@ async def main(connection: object) -> None:
                     current_state.value if current_state else "?",
                     state.value,
                 )
+            else:
+                await _enter_state(claude_sid, state, signal)
 
     async def clear_session(claude_sid: str) -> None:
         """Fully remove a session: leave state + restore original title + cleanup."""
@@ -622,6 +800,7 @@ async def main(connection: object) -> None:
             return
         await _leave_state(claude_sid)
         info = active.pop(claude_sid)
+        await _clear_status_display(info)
         # Restore original tab title
         tab = info.get("tab")
         if tab:
@@ -653,7 +832,9 @@ async def main(connection: object) -> None:
                 for sid in current_sids:
                     prev = prev_signals.get(sid)
                     curr = signals[sid]
-                    if prev is None or prev.get("type") != curr.get("type"):
+                    if prev is None or _signal_display_signature(prev) != _signal_display_signature(
+                        curr
+                    ):
                         await apply_state(sid, curr)
 
                 # Removed signals → clear session

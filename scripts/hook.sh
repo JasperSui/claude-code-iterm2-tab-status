@@ -19,6 +19,88 @@ extract() {
   echo "$INPUT" | sed -n "s/.*\"${key}\": *\"\\([^\"]*\\)\".*/\\1/p" | head -1
 }
 
+subtitle_activity_source() {
+  local source="${CLAUDE_ITERM2_TAB_STATUS_SUBTITLE_ACTIVITY_SOURCE:-}"
+  if [[ -z "$source" && -f "$HOME/.config/claude-tab-status/config.json" ]]; then
+    source="$(
+      sed -n 's/.*"subtitle_activity_source": *"\([^"]*\)".*/\1/p' \
+        "$HOME/.config/claude-tab-status/config.json" | head -1
+    )"
+  fi
+  printf '%s' "$source" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]'
+}
+
+activity_word() {
+  local word="$1" index="$2" normalized first rest
+  normalized="$(printf '%s' "$word" | tr '[:upper:]' '[:lower:]')"
+  case "$normalized" in
+    debugging) normalized="debug" ;;
+    editing) normalized="edit" ;;
+    fixing) normalized="fix" ;;
+    implementing) normalized="implement" ;;
+    planning) normalized="plan" ;;
+    reviewing) normalized="review" ;;
+    running) normalized="run" ;;
+    testing) normalized="test" ;;
+    updating) normalized="update" ;;
+    writing) normalized="write" ;;
+  esac
+  case "$normalized" in
+    api|pr|url)
+      printf '%s' "$normalized" | tr '[:lower:]' '[:upper:]'
+      return
+      ;;
+  esac
+  if [[ "$index" == "0" ]]; then
+    first="$(printf '%s' "$normalized" | cut -c1 | tr '[:lower:]' '[:upper:]')"
+    rest="$(printf '%s' "$normalized" | cut -c2-)"
+    printf '%s%s' "$first" "$rest"
+    return
+  fi
+  printf '%s' "$normalized"
+}
+
+activity_snippet() {
+  local text="$1" cleaned word normalized candidate next
+  local -a words
+  if printf '%s' "$text" | grep -Eiq \
+    '\b(password|passwd|passphrase|secret|token|api[-_ ]?key|private[-_ ]?key|credential|bearer|cookie)\b[[:space:]]*[:=]?'; then
+    return
+  fi
+
+  cleaned="$(
+    printf '%s' "$text" |
+      tr '\r\n\t' '   ' |
+      sed -E \
+        -e 's#https?://[^[:space:]]+|www\.[^[:space:]]+# link #g' \
+        -e 's#[^[:space:]]+@[^[:space:]]+\.[^[:space:]]+# email #g' \
+        -e 's#(^|[[:space:]])(~|/)[^[:space:]]+# file #g' \
+        -e 's/[Pp]ull[[:space:]]+[Rr]equest/ PR /g' \
+        -e 's/[^[:alnum:]#]+/ /g'
+  )"
+  read -r -a words <<< "$cleaned"
+  local snippet="" count=0
+  for word in "${words[@]}"; do
+    normalized="$(printf '%s' "$word" | tr '[:upper:]' '[:lower:]')"
+    case "$normalized" in
+      a|an|and|about|can|for|in|me|my|of|on|our|please|the|this|to|with|you)
+        continue
+        ;;
+    esac
+    candidate="$(activity_word "$word" "$count")"
+    next="$candidate"
+    if [[ -n "$snippet" ]]; then
+      next="$snippet $candidate"
+    fi
+    if (( count >= 2 || ${#next} > 18 )); then
+      break
+    fi
+    snippet="$next"
+    count=$((count + 1))
+  done
+  printf '%s' "$snippet"
+}
+
 # Extract fields
 SESSION_ID="$(extract "session_id")"
 if [[ -z "$SESSION_ID" ]]; then
@@ -32,6 +114,11 @@ HOOK_EVENT="$(extract "hook_event_name")"
 if [[ "$HOOK_EVENT" == "UserPromptSubmit" ]]; then
   SIGNAL_TYPE="running"
   MESSAGE=""
+  if [[ "$(subtitle_activity_source)" == "prompt" ]]; then
+    ACTIVITY="$(activity_snippet "$(extract "prompt")")"
+  else
+    ACTIVITY=""
+  fi
 else
   # Notification event — map notification_type to signal type
   NOTIF_TYPE="$(extract "notification_type")"
@@ -40,6 +127,7 @@ else
     *)                 SIGNAL_TYPE="idle" ;;
   esac
   MESSAGE="$(extract "message")"
+  ACTIVITY=""
 fi
 
 CWD="$(extract "cwd")"
@@ -80,6 +168,12 @@ S_MSG="$(escape_json "$MESSAGE")"
 S_PROJ="$(escape_json "$PROJECT")"
 S_CWD="$(escape_json "$CWD")"
 S_TTY="$(escape_json "$TTY")"
+S_ACTIVITY="$(escape_json "$ACTIVITY")"
+
+ACTIVITY_FIELD=""
+if [[ -n "$S_ACTIVITY" ]]; then
+  printf -v ACTIVITY_FIELD ',\n  "activity": "%s"' "$S_ACTIVITY"
+fi
 
 # Write signal file
 cat > "${STATUS_DIR}/${SESSION_ID}.json" <<SIGNAL
@@ -91,6 +185,6 @@ cat > "${STATUS_DIR}/${SESSION_ID}.json" <<SIGNAL
   "cwd": "${S_CWD}",
   "tty": "${S_TTY}",
   "pid": "${PID}",
-  "ts": "${TS}"
+  "ts": "${TS}"${ACTIVITY_FIELD}
 }
 SIGNAL

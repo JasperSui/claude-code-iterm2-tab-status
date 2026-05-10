@@ -88,19 +88,20 @@ Settings are stored in `~/.config/claude-tab-status/config.json`. Example with a
 
 ```json
 {
-  "signal_dir": "/tmp/claude-tab-status",
+  "dir": "/tmp/claude-tab-status",
   "color_r": 255,
   "color_g": 140,
   "color_b": 0,
-  "flash_interval": 0.6,
+  "interval": 0.6,
   "prefix_running": "⚡ ",
   "prefix_idle": "💤 ",
   "prefix_attention": "🔴 ",
-  "badge_text": "⚠️ Needs input",
+  "display_target": "title",
+  "subtitle_activity_source": "off",
+  "badge": "⚠️ Needs input",
   "badge_enabled": true,
   "notify": false,
-  "sound": "",
-  "log_level": "WARNING"
+  "sound": ""
 }
 ```
 
@@ -116,6 +117,30 @@ Settings are resolved in this order (highest wins):
 
 Environment variables are useful for CI or per-machine overrides without touching the config file.
 
+### Display target
+
+By default, status is shown as a tab title prefix.
+
+Set `"display_target": "subtitle"` to leave the main tab title alone and write status to the iTerm2 user variable `user.claudeStatus`. In iTerm2, open **Settings > Profiles > General** and set **Subtitle** to:
+
+```text
+\(user.claudeStatus)
+```
+
+Use `"display_target": "both"` to update both the title prefix and subtitle variable.
+
+Set `"subtitle_activity_source": "prompt"` to append a compact, sanitized activity snippet
+to the subtitle, such as `⚡ Run tests`. The default is `"off"`, which keeps subtitle
+output status-only and does not persist prompt text in signal files. Prompt snippets are
+opt-in because Claude Code's `UserPromptSubmit` hook payload includes the submitted
+prompt.
+
+Claude Code can also set terminal titles. If you want iTerm2 to control the main title while this plugin updates the subtitle, add this to your shell startup file:
+
+```bash
+export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
+```
+
 <details>
 <summary>Environment variable reference</summary>
 
@@ -129,6 +154,8 @@ Environment variables are useful for CI or per-machine overrides without touchin
 | `CLAUDE_ITERM2_TAB_STATUS_PREFIX_RUNNING`   | `⚡ `                     | Running state prefix                            |
 | `CLAUDE_ITERM2_TAB_STATUS_PREFIX_IDLE`      | `💤 `                     | Idle state prefix                               |
 | `CLAUDE_ITERM2_TAB_STATUS_PREFIX_ATTENTION` | `🔴 `                     | Attention state prefix                          |
+| `CLAUDE_ITERM2_TAB_STATUS_DISPLAY_TARGET`   | `title`                  | Where to show status: `title`, `subtitle`, or `both` |
+| `CLAUDE_ITERM2_TAB_STATUS_SUBTITLE_ACTIVITY_SOURCE` | `off`             | Subtitle activity source: `off` or `prompt`    |
 | `CLAUDE_ITERM2_TAB_STATUS_BADGE`            | `⚠️ Needs input`          | Badge text (attention only)                     |
 | `CLAUDE_ITERM2_TAB_STATUS_BADGE_ENABLED`    | `true`                   | Enable/disable badge (attention only)           |
 | `CLAUDE_ITERM2_TAB_STATUS_NOTIFY`           | `false`                  | macOS notification (attention only)             |

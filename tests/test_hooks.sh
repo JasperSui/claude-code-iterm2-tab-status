@@ -20,6 +20,16 @@ run_hook() {
   echo "$json" | CLAUDE_ITERM2_TAB_STATUS_DIR="$status_dir" bash "$HOOK"
 }
 
+run_hook_with_activity() {
+  local status_dir="$1"
+  local json="$2"
+  mkdir -p "$status_dir"
+  echo "$json" | \
+    CLAUDE_ITERM2_TAB_STATUS_DIR="$status_dir" \
+    CLAUDE_ITERM2_TAB_STATUS_SUBTITLE_ACTIVITY_SOURCE=prompt \
+    bash "$HOOK"
+}
+
 # Helper: read a field from a JSON file (pure bash, same approach as hook.sh)
 read_field() {
   local file="$1" field="$2"
@@ -158,6 +168,45 @@ if run_hook "$DIR10" '{"hook_event_name":"Notification","notification_type":"idl
   [[ "$count" == "0" ]] && pass "No signal file created" || fail "No session_id" "signal file created unexpectedly"
 else
   fail "No session_id" "hook exited non-zero"
+fi
+
+# Test 11: Prompt activity is not persisted by default
+echo "Test 11: UserPromptSubmit prompt is private by default"
+DIR11="$TMPDIR_BASE/t11"
+run_hook "$DIR11" '{"session_id":"ses-private","hook_event_name":"UserPromptSubmit","prompt":"run the tests","cwd":"/proj"}'
+if [[ -f "$DIR11/ses-private.json" ]]; then
+  if grep -q '"activity"' "$DIR11/ses-private.json"; then
+    fail "Default activity privacy" "activity field should not be present"
+  else
+    pass "activity omitted by default"
+  fi
+else
+  fail "Default activity privacy" "signal file not created"
+fi
+
+# Test 12: Prompt activity is persisted only with explicit opt-in
+echo "Test 12: UserPromptSubmit prompt activity opt-in"
+DIR12="$TMPDIR_BASE/t12"
+run_hook_with_activity "$DIR12" '{"session_id":"ses-activity","hook_event_name":"UserPromptSubmit","prompt":"run the tests","cwd":"/proj"}'
+if [[ -f "$DIR12/ses-activity.json" ]]; then
+  activity=$(read_field "$DIR12/ses-activity.json" "activity")
+  [[ "$activity" == "Run tests" ]] && pass "activity captured as compact snippet with opt-in" || fail "activity opt-in" "got '$activity'"
+else
+  fail "activity opt-in" "signal file not created"
+fi
+
+# Test 13: Sensitive prompt activity is not persisted even with opt-in
+echo "Test 13: Sensitive UserPromptSubmit activity is filtered"
+DIR13="$TMPDIR_BASE/t13"
+run_hook_with_activity "$DIR13" '{"session_id":"ses-sensitive","hook_event_name":"UserPromptSubmit","prompt":"use token=abc123 to call the API","cwd":"/proj"}'
+if [[ -f "$DIR13/ses-sensitive.json" ]]; then
+  if grep -q '"activity"' "$DIR13/ses-sensitive.json"; then
+    fail "Sensitive activity filtering" "activity field should not be present"
+  else
+    pass "sensitive activity omitted"
+  fi
+else
+  fail "Sensitive activity filtering" "signal file not created"
 fi
 
 echo ""
