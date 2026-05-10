@@ -1,6 +1,6 @@
 [project]
 name = "claude-code-iterm2-tab-status"
-version = "0.1.0"
+version = "0.2.0"
 description = "Show iTerm2 tab status (running/idle/attention) for Claude Code sessions"
 license = "MIT"
 authors = [{name = "Jasper Sui"}]

@@ -555,10 +555,15 @@ class TestPickFlashColor:
 
 
 class TestConfig:
-    def test_defaults_when_no_file(self, tmp_path: Path):
+    def test_defaults_when_no_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         """No config file → all defaults."""
+        # Stable default regardless of host XDG_RUNTIME_DIR (e.g. systemd Linux runners).
+        monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
         cfg = claude_tab_status.load_config(str(tmp_path / "nonexistent.json"))
-        assert cfg["dir"] == "/tmp/claude-tab-status"
+        # _DEFAULTS["dir"] is captured at module-load; recompute the expected value the
+        # same way to stay agnostic of where this test runs.
+        assert cfg["dir"] == claude_tab_status._DEFAULTS["dir"]
+        assert "/tmp/" not in cfg["dir"]  # regression: no shared-tmp leak
         assert cfg["prefix_running"] == "⚡ "
         assert cfg["prefix_idle"] == "💤 "
         assert cfg["prefix_attention"] == "🔴 "
@@ -682,3 +687,123 @@ class TestHotReload:
         assert "\U0001f680 " in claude_tab_status.ALL_PREFIXES
         # Cleanup
         claude_tab_status.reload_config(str(tmp_path / "nonexistent.json"))
+
+
+# --- TestDefaultSignalDir ---
+
+
+class TestDefaultSignalDir:
+    def test_default_dir_uses_xdg_runtime_dir_when_set(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+        assert claude_tab_status._default_signal_dir() == str(tmp_path / "claude-tab-status")
+
+    def test_default_dir_falls_back_to_home_cache(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+        expected = str(Path.home() / ".cache" / "claude-tab-status")
+        assert claude_tab_status._default_signal_dir() == expected
+
+    def test_default_dir_is_not_in_tmp(self):
+        # Regression: /tmp is shared across users on macOS — signal files leak cwd/pid/tty/activity.
+        assert not claude_tab_status._default_signal_dir().startswith("/tmp/")
+
+
+# --- TestDisplayTargetHotReload ---
+
+
+class TestDisplayTargetHotReload:
+    def _make_active(self, state: claude_tab_status.TabState | None = None) -> dict:
+        session = MagicMock()
+        session.async_set_variable = AsyncMock()
+        session.async_set_name = AsyncMock()
+        snapshot = MagicMock()
+        snapshot.name = "my-tab"
+        return {
+            "ses-1": {
+                "session": session,
+                "snapshot": snapshot,
+                "tab": None,
+                "state": state,
+            }
+        }
+
+    @pytest.mark.asyncio
+    async def test_drop_subtitle_clears_user_variable(self):
+        active = self._make_active(state=claude_tab_status.TabState.RUNNING)
+        set_title = AsyncMock()
+
+        await claude_tab_status._handle_display_target_change(active, "both", "title", set_title)
+
+        active["ses-1"]["session"].async_set_variable.assert_awaited_once_with(
+            "user.claudeStatus", ""
+        )
+        # Title channel was already active; nothing to re-apply or strip.
+        set_title.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_drop_title_strips_prefix_via_session_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Re-apply step reads CONFIG["display_target"]; mirror the new target.
+        monkeypatch.setitem(claude_tab_status.CONFIG, "display_target", "subtitle")
+        active = self._make_active(state=claude_tab_status.TabState.RUNNING)
+        active["ses-1"]["snapshot"].name = "⚡ my-tab"
+        set_title = AsyncMock()
+
+        await claude_tab_status._handle_display_target_change(
+            active, "title", "subtitle", set_title
+        )
+
+        active["ses-1"]["session"].async_set_name.assert_awaited()
+        called_with = active["ses-1"]["session"].async_set_name.await_args[0][0]
+        assert "⚡" not in called_with
+        # Subtitle channel was added → state must be re-applied.
+        active["ses-1"]["session"].async_set_variable.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_add_channel_reapplies_current_state(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setitem(claude_tab_status.CONFIG, "display_target", "both")
+        active = self._make_active(state=claude_tab_status.TabState.ATTENTION)
+        set_title = AsyncMock()
+
+        await claude_tab_status._handle_display_target_change(active, "title", "both", set_title)
+
+        # Subtitle was newly added → user variable should now carry the attention prefix.
+        active["ses-1"]["session"].async_set_variable.assert_awaited()
+        # Title was already active, so re-apply via _apply_status_display also calls set_title.
+        set_title.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_change_skips_session_writes(self):
+        active = self._make_active(state=claude_tab_status.TabState.RUNNING)
+        set_title = AsyncMock()
+
+        await claude_tab_status._handle_display_target_change(active, "title", "title", set_title)
+
+        active["ses-1"]["session"].async_set_variable.assert_not_awaited()
+        active["ses-1"]["session"].async_set_name.assert_not_awaited()
+        set_title.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_skips_sessions_without_state(self):
+        active = self._make_active(state=None)
+        set_title = AsyncMock()
+
+        await claude_tab_status._handle_display_target_change(
+            active, "title", "subtitle", set_title
+        )
+
+        # Title still gets cleared regardless of state...
+        active["ses-1"]["session"].async_set_name.assert_awaited()
+        # ...but no re-apply because state is None.
+        set_title.assert_not_awaited()
+
+    def test_signal_watcher_invokes_handler_on_display_target_change(self):
+        source = inspect.getsource(claude_tab_status.main)
+        watcher = source.split("    async def signal_watcher", 1)[1].split(
+            "    # Focus monitor", 1
+        )[0]
+
+        assert "_handle_display_target_change(" in watcher
+        assert "last_display_target" in watcher

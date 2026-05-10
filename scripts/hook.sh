@@ -6,8 +6,21 @@
 #   UserPromptSubmit                → writes signal with type "running"
 set -euo pipefail
 
-STATUS_DIR="${CLAUDE_ITERM2_TAB_STATUS_DIR:-/tmp/claude-tab-status}"
+default_status_dir() {
+  # Per-user directory so other local users cannot read signal files (which
+  # carry cwd, pid, tty, and an optional sanitized prompt snippet).
+  if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+    printf '%s' "${XDG_RUNTIME_DIR}/claude-tab-status"
+  else
+    printf '%s' "${HOME}/.cache/claude-tab-status"
+  fi
+}
+
+STATUS_DIR="${CLAUDE_ITERM2_TAB_STATUS_DIR:-$(default_status_dir)}"
 mkdir -p "$STATUS_DIR"
+# Enforce 0700 on the leaf even if it pre-existed with looser perms (e.g. created
+# by a 0.1.x install in /tmp). Parent dirs keep whatever the user already had.
+chmod 700 "$STATUS_DIR" 2>/dev/null || true
 
 # Read all of stdin
 INPUT="$(cat)"

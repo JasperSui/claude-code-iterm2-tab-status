@@ -88,7 +88,7 @@ Settings are stored in `~/.config/claude-tab-status/config.json`. Example with a
 
 ```json
 {
-  "dir": "/tmp/claude-tab-status",
+  "dir": "~/.cache/claude-tab-status",
   "color_r": 255,
   "color_g": 140,
   "color_b": 0,
@@ -146,7 +146,7 @@ export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
 
 | Variable                                    | Default                  | Description                                     |
 | ------------------------------------------- | ------------------------ | ----------------------------------------------- |
-| `CLAUDE_ITERM2_TAB_STATUS_DIR`              | `/tmp/claude-tab-status` | Signal file directory                           |
+| `CLAUDE_ITERM2_TAB_STATUS_DIR`              | `$XDG_RUNTIME_DIR/claude-tab-status` or `~/.cache/claude-tab-status` | Signal file directory (per-user, mode 0700)     |
 | `CLAUDE_ITERM2_TAB_STATUS_COLOR_R`          | `255`                    | Flash color red (0-255)                         |
 | `CLAUDE_ITERM2_TAB_STATUS_COLOR_G`          | `140`                    | Flash color green (0-255)                       |
 | `CLAUDE_ITERM2_TAB_STATUS_COLOR_B`          | `0`                      | Flash color blue (0-255)                        |
@@ -166,7 +166,7 @@ export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
 
 ## Troubleshooting
 
-**Tab doesn't show status** — Check that the iTerm2 Python Runtime is installed. Verify signal files are created: `ls /tmp/claude-tab-status/` after Claude goes idle. Set `export CLAUDE_ITERM2_TAB_STATUS_LOG=DEBUG` and check iTerm2's script console (Scripts → Manage → Console).
+**Tab doesn't show status** — Check that the iTerm2 Python Runtime is installed. Verify signal files are created: `ls "${XDG_RUNTIME_DIR:-$HOME/.cache}/claude-tab-status/"` after Claude goes idle. Set `export CLAUDE_ITERM2_TAB_STATUS_LOG=DEBUG` and check iTerm2's script console (Scripts → Manage → Console).
 
 **Wrong tab gets prefix** — The TTY in the signal file doesn't match the iTerm2 session. Restart iTerm2.
 

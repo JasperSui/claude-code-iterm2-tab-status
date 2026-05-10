@@ -1,7 +1,9 @@
 """claude-code-iterm2-tab-status — iTerm2 adapter.
 
-Polls /tmp/claude-tab-status/ for signal files written by Claude Code hooks.
-Shows tab status (running/idle/attention) for each Claude Code session.
+Polls the per-user signal directory (default
+``${XDG_RUNTIME_DIR:-$HOME/.cache}/claude-tab-status``) for signal files written
+by Claude Code hooks. Shows tab status (running/idle/attention) for each Claude
+Code session.
 
 Three states:
   Running (⚡)   — Claude is processing. Prefix only, no flash.
@@ -18,7 +20,9 @@ Configuration:
   The config file is hot-reloaded — changes take effect within ~1 second.
 
 Environment variables (all optional):
-  CLAUDE_ITERM2_TAB_STATUS_DIR              Signal directory (default: /tmp/claude-tab-status)
+  CLAUDE_ITERM2_TAB_STATUS_DIR              Signal directory
+                                              (default: $XDG_RUNTIME_DIR/claude-tab-status,
+                                               or ~/.cache/claude-tab-status)
   CLAUDE_ITERM2_TAB_STATUS_COLOR_R          Flash color red 0-255 (default: 255)
   CLAUDE_ITERM2_TAB_STATUS_COLOR_G          Flash color green 0-255 (default: 140)
   CLAUDE_ITERM2_TAB_STATUS_COLOR_B          Flash color blue 0-255 (default: 0)
@@ -54,8 +58,20 @@ from typing import Awaitable, Callable, Optional
 
 CONFIG_PATH = os.path.expanduser("~/.config/claude-tab-status/config.json")
 
+
+def _default_signal_dir() -> str:
+    """Per-user signal directory.
+
+    Defaults to ``$XDG_RUNTIME_DIR/claude-tab-status`` when set (typically tmpfs and
+    already mode 0700), otherwise ``~/.cache/claude-tab-status``. We avoid ``/tmp``
+    so signal files are not readable by other local users on shared hosts.
+    """
+    base = os.environ.get("XDG_RUNTIME_DIR") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "claude-tab-status")
+
+
 _DEFAULTS: dict[str, object] = {
-    "dir": "/tmp/claude-tab-status",
+    "dir": _default_signal_dir(),
     "prefix_running": "⚡ ",
     "prefix_idle": "💤 ",
     "prefix_attention": "🔴 ",
@@ -564,6 +580,50 @@ async def _clear_status_display(info: dict) -> None:
     await _clear_subtitle_status(info["session"])
 
 
+async def _handle_display_target_change(
+    active: dict[str, dict],
+    old_target: str,
+    new_target: str,
+    set_title: Callable[[dict, str], Awaitable[None]],
+) -> None:
+    """Reconcile active sessions when ``display_target`` changes via hot-reload.
+
+    Without this, switching from ``title`` to ``subtitle`` mid-session leaves the
+    title prefix stuck on the tab; switching the other way leaves a stale subtitle
+    variable in place.
+    """
+    old_title = old_target in {"title", "both"}
+    new_title = new_target in {"title", "both"}
+    old_subtitle = old_target in {"subtitle", "both"}
+    new_subtitle = new_target in {"subtitle", "both"}
+
+    for info in list(active.values()):
+        if old_title and not new_title:
+            tab = info.get("tab")
+            try:
+                if tab:
+                    displayed = await tab.async_get_variable("title") or info["snapshot"].name
+                    await tab.async_set_title(strip_all_prefixes(displayed))
+                else:
+                    clean = strip_all_prefixes(info["snapshot"].name)
+                    await info["session"].async_set_name(clean)  # type: ignore[union-attr]
+            except Exception:
+                log.debug("Failed to clear title prefix on display_target change")
+
+        if old_subtitle and not new_subtitle:
+            await _clear_subtitle_status(info["session"])
+
+        # If a channel was added, re-apply the current state immediately so the
+        # user sees feedback without waiting for the next signal change.
+        added_title = new_title and not old_title
+        added_subtitle = new_subtitle and not old_subtitle
+        if added_title or added_subtitle:
+            state = info.get("state")
+            if state is not None:
+                prefix = _STATE_PREFIXES[state]
+                await _apply_status_display(info, prefix, {}, set_title)
+
+
 def add_title_prefix(name: str, prefix: str) -> str:
     """Add prefix to name if not already present."""
     if name.startswith(prefix):
@@ -821,8 +881,15 @@ async def main(connection: object) -> None:
     # Signal watcher: polls signal directory every 1 second
     async def signal_watcher() -> None:
         prev_signals: dict[str, dict] = {}
+        last_display_target = CONFIG["display_target"]
         while True:
             _check_config_reload()
+            current_display_target = CONFIG["display_target"]
+            if current_display_target != last_display_target:
+                await _handle_display_target_change(
+                    active, last_display_target, current_display_target, _set_tab_title
+                )
+                last_display_target = current_display_target
             try:
                 signals = read_signals(CONFIG["dir"])
                 current_sids = set(signals.keys())
