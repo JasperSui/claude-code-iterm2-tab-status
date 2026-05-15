@@ -49,6 +49,7 @@ import os
 import re
 import subprocess
 import time
+import unicodedata
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -513,7 +514,14 @@ def _activity_snippet(text: object) -> str:
     cleaned = re.sub(r"(?:~|/)[^\s]+", " file ", cleaned)
     cleaned = re.sub(r"(?i)\bpull\s+request\b", " PR ", cleaned)
     cleaned = re.sub(r"[\r\n\t]+", " ", cleaned)
-    cleaned = re.sub(r"[^A-Za-z0-9#]+", " ", cleaned)
+    # Keep Unicode letters and numbers (categories L*/N*) plus '#'. Everything else
+    # — control chars, zero-width, bidi overrides, punctuation, symbols — becomes a
+    # space. This broadens the previous ASCII-only whitelist to support non-English
+    # prompts while preserving the same sanitization profile (categories L and N are
+    # safe to render; control / format / mark categories are still stripped).
+    cleaned = "".join(
+        c if (c == "#" or unicodedata.category(c)[0] in "LN") else " " for c in cleaned
+    )
 
     words = [word for word in cleaned.split() if word.lower() not in _ACTIVITY_STOP_WORDS]
     if not words:
