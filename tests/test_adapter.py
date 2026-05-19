@@ -385,23 +385,17 @@ class TestDisplayTargetHelpers:
         signal = {"activity": "   "}
         assert claude_tab_status._subtitle_status_text("⚡ ", signal) == "⚡"
 
-    def test_subtitle_status_text_preserves_swedish_letters(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_subtitle_status_text_preserves_swedish_letters(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setitem(claude_tab_status.CONFIG, "subtitle_activity_source", "prompt")
         signal = {"activity": "kör testerna"}
         assert claude_tab_status._subtitle_status_text("⚡ ", signal) == "⚡ Kör testerna"
 
-    def test_subtitle_status_text_preserves_german_letters(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_subtitle_status_text_preserves_german_letters(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setitem(claude_tab_status.CONFIG, "subtitle_activity_source", "prompt")
         signal = {"activity": "führe Tests aus"}
         assert claude_tab_status._subtitle_status_text("⚡ ", signal) == "⚡ Führe tests"
 
-    def test_subtitle_status_text_preserves_japanese_letters(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_subtitle_status_text_preserves_japanese_letters(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setitem(claude_tab_status.CONFIG, "subtitle_activity_source", "prompt")
         signal = {"activity": "テストを実行"}
         assert claude_tab_status._subtitle_status_text("⚡ ", signal) == "⚡ テストを実行"
