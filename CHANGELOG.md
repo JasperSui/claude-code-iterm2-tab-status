@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0 — 2026-05-31
+
+### Added
+- `flash_enabled` config (bool, default `true`): set to `false` to keep the 🔴 attention prefix and badge but stop the tab color from animating. New env var `CLAUDE_ITERM2_TAB_STATUS_FLASH_ENABLED`; hot-reloadable at runtime. (#9, thanks @bginbey)
+
+### Changed
+- Subtitle activity snippets now preserve Unicode letters (e.g. CJK) instead of stripping them. (#4)
+
+### Security
+- **Validate `session_id`** before using it in signal-file paths: values that aren't plain `[A-Za-z0-9_-]` tokens are rejected, closing a path-traversal vector (e.g. a crafted `session_id` containing `../`). Real session IDs are UUIDs, so nothing legitimate is rejected. (#8)
+- **Removed the legacy `/tmp/claude-tab-status` fallback** from bootstrap. Nothing has read that path since v0.2.0 moved signals to the private per-user dir, so this drops a leftover world-readable path. (#8)
+
 ## 0.2.0 — 2026-05-10
 
 ### Added
