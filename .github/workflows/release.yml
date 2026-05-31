@@ -1,0 +1,82 @@
+name: Release
+
+# Cuts a release automatically when the plugin version changes on main.
+# To release: bump "version" in .claude-plugin/plugin.json and add a matching
+# "## X.Y.Z — date" section to CHANGELOG.md, then merge to main. This workflow
+# tags vX.Y.Z and publishes a GitHub Release using that changelog section.
+# It is idempotent: if the tag already exists, it does nothing.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".claude-plugin/plugin.json"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read plugin version
+        id: ver
+        run: |
+          VERSION=$(python3 -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Plugin version: $VERSION"
+
+      - name: Check whether tag already exists
+        id: check
+        run: |
+          if git rev-parse "refs/tags/${{ steps.ver.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${{ steps.ver.outputs.tag }} already exists; nothing to release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract changelog section
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          python3 - "${{ steps.ver.outputs.version }}" <<'PY' > release_notes.md
+          import sys
+          ver = sys.argv[1]
+          capturing = False
+          out = []
+          # Version sections are "## X.Y.Z — date"; subsections use "### ...".
+          # startswith("## ") matches the former but not the latter ("### " -> False).
+          for line in open("CHANGELOG.md", encoding="utf-8").read().splitlines():
+              if line.startswith("## "):
+                  if capturing:
+                      break
+                  if line[3:].split()[0] == ver:
+                      capturing = True
+                  continue
+              if capturing:
+                  out.append(line)
+          notes = "\n".join(out).strip()
+          print(notes if notes else f"Release {ver}")
+          PY
+          echo "----- release notes -----"
+          cat release_notes.md
+
+      - name: Create tag
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          git tag "${{ steps.ver.outputs.tag }}"
+          git push origin "${{ steps.ver.outputs.tag }}"
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            --title "${{ steps.ver.outputs.tag }}" \
+            --notes-file release_notes.md

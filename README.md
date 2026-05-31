@@ -31,6 +31,18 @@ After the first session, **restart iTerm2** (or toggle **Scripts** → **AutoLau
 
 ![Initial Setup](assets/initial-setup.jpg)
 
+### Updating
+
+To update to the latest release:
+
+```bash
+claude plugin update iterm2-tab-status@jaspersui-marketplace
+```
+
+This re-fetches the plugin and installs the newest version on its own — you do **not** need to run `/plugin marketplace update` first (that only refreshes the catalog listing). After updating, **restart the iTerm2 adapter** (close and reopen iTerm2, or toggle **Scripts** → **AutoLaunch** → **claude_tab_status.py**) so it picks up any adapter-side changes.
+
+See [CHANGELOG.md](CHANGELOG.md) for what's in each release.
+
 
 ### Manual Setup
 
