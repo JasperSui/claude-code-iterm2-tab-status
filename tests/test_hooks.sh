@@ -209,6 +209,25 @@ else
   fail "Sensitive activity filtering" "signal file not created"
 fi
 
+# Test 14: Path-traversal session_id is rejected (no file written anywhere)
+echo "Test 14: Malicious session_id is rejected"
+DIR14="$TMPDIR_BASE/t14"
+mkdir -p "$DIR14"
+# Sentinel target outside the status dir that a traversal would land on.
+TRAVERSAL_TARGET="$TMPDIR_BASE/t14-escape.json"
+rm -f "$TRAVERSAL_TARGET"
+if run_hook "$DIR14" '{"session_id":"../t14-escape","hook_event_name":"Notification","notification_type":"idle_prompt","cwd":"/proj"}' 2>/dev/null; then
+  if [[ -e "$TRAVERSAL_TARGET" ]]; then
+    fail "Path traversal" "signal escaped status dir to $TRAVERSAL_TARGET"
+  else
+    pass "no file written outside status dir"
+  fi
+  count=$(find "$DIR14" -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
+  [[ "$count" == "0" ]] && pass "no signal file created in status dir" || fail "Path traversal" "signal file created unexpectedly"
+else
+  fail "Path traversal" "hook exited non-zero"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

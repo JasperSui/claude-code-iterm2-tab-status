@@ -120,6 +120,13 @@ if [[ -z "$SESSION_ID" ]]; then
   echo "hook.sh: no session_id found, skipping" >&2
   exit 0
 fi
+# Guard against path traversal: SESSION_ID is interpolated into the signal
+# filename below, so reject ids with characters outside [A-Za-z0-9_-] (e.g.
+# "/" or ".."). Claude Code only emits UUID-style ids, so nothing valid is lost.
+if [[ ! "$SESSION_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  echo "hook.sh: invalid session_id, skipping" >&2
+  exit 0
+fi
 
 HOOK_EVENT="$(extract "hook_event_name")"
 
