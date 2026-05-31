@@ -90,8 +90,9 @@ if [[ -f "$ADAPTER_SRC" ]]; then
   cp "$ADAPTER_SRC" "$AUTOLAUNCH/claude_tab_status.py"
 fi
 
-# Create signal directory
-mkdir -p /tmp/claude-tab-status
+# The signal directory is created on demand by hook.sh at mode 0700 (see
+# default_status_dir there). No need to pre-create /tmp/claude-tab-status:
+# the default path uses $XDG_RUNTIME_DIR or ~/.cache, never /tmp.
 
 # Write marker with version
 echo "$PLUGIN_VERSION" > "$BOOTSTRAP_MARKER"
