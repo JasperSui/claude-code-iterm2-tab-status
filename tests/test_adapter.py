@@ -586,6 +586,7 @@ class TestConfig:
         assert cfg["color_g"] == 140
         assert cfg["color_b"] == 0
         assert cfg["interval"] == 0.6
+        assert cfg["flash_enabled"] is True
         assert cfg["badge_enabled"] is True
         assert cfg["badge"] == "⚠️ Needs input"
         assert cfg["notify"] is False
@@ -681,6 +682,19 @@ class TestConfig:
         monkeypatch.setenv("CLAUDE_ITERM2_TAB_STATUS_BADGE_ENABLED", "false")
         cfg = claude_tab_status.load_config(str(tmp_path / "nonexistent.json"))
         assert cfg["badge_enabled"] is False
+
+    def test_flash_enabled_false(self, tmp_path: Path):
+        """flash_enabled=false is respected."""
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text(json.dumps({"flash_enabled": False}))
+        cfg = claude_tab_status.load_config(str(cfg_file))
+        assert cfg["flash_enabled"] is False
+
+    def test_env_flash_enabled_false(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """Env var FLASH_ENABLED=false overrides default."""
+        monkeypatch.setenv("CLAUDE_ITERM2_TAB_STATUS_FLASH_ENABLED", "false")
+        cfg = claude_tab_status.load_config(str(tmp_path / "nonexistent.json"))
+        assert cfg["flash_enabled"] is False
 
 
 # --- TestHotReload ---
@@ -822,3 +836,26 @@ class TestDisplayTargetHotReload:
 
         assert "_handle_display_target_change(" in watcher
         assert "last_display_target" in watcher
+
+
+# --- TestFlashEnabled ---
+
+
+class TestFlashEnabled:
+    def test_enter_state_gates_flash_on_config(self):
+        source = inspect.getsource(claude_tab_status.main)
+        enter_state = source.split("    async def _enter_state", 1)[1].split(
+            "    async def _leave_state", 1
+        )[0]
+
+        assert 'if CONFIG["flash_enabled"]:' in enter_state
+        assert "_start_flash(claude_sid)" in enter_state
+
+    def test_signal_watcher_reconciles_flash_enabled_change(self):
+        source = inspect.getsource(claude_tab_status.main)
+        watcher = source.split("    async def signal_watcher", 1)[1].split(
+            "    # Focus monitor", 1
+        )[0]
+
+        assert "_reconcile_flash_enabled(" in watcher
+        assert "last_flash_enabled" in watcher
