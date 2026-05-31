@@ -64,6 +64,8 @@ Lifecycle: `User submits → ⚡ → Claude finishes → 💤 → User submits �
 
 Your original tab color, title, and badge are saved and restored.
 
+Prefer the prefix/badge without the color flash? Set `"flash_enabled": false` — the badge and notification still fire, just no tab-color flash. It's hot-reloaded, so toggling it off also stops a flash that's already in progress.
+
 ## How it works
 
 ```
@@ -93,6 +95,7 @@ Settings are stored in `~/.config/claude-tab-status/config.json`. Example with a
   "color_g": 140,
   "color_b": 0,
   "interval": 0.6,
+  "flash_enabled": true,
   "prefix_running": "⚡ ",
   "prefix_idle": "💤 ",
   "prefix_attention": "🔴 ",
@@ -151,6 +154,7 @@ export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
 | `CLAUDE_ITERM2_TAB_STATUS_COLOR_G`          | `140`                    | Flash color green (0-255)                       |
 | `CLAUDE_ITERM2_TAB_STATUS_COLOR_B`          | `0`                      | Flash color blue (0-255)                        |
 | `CLAUDE_ITERM2_TAB_STATUS_INTERVAL`         | `0.6`                    | Flash interval in seconds                       |
+| `CLAUDE_ITERM2_TAB_STATUS_FLASH_ENABLED`    | `true`                   | Enable/disable tab-color flash (attention only) |
 | `CLAUDE_ITERM2_TAB_STATUS_PREFIX_RUNNING`   | `⚡ `                     | Running state prefix                            |
 | `CLAUDE_ITERM2_TAB_STATUS_PREFIX_IDLE`      | `💤 `                     | Idle state prefix                               |
 | `CLAUDE_ITERM2_TAB_STATUS_PREFIX_ATTENTION` | `🔴 `                     | Attention state prefix                          |

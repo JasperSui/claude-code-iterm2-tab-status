@@ -27,6 +27,7 @@ Environment variables (all optional):
   CLAUDE_ITERM2_TAB_STATUS_COLOR_G          Flash color green 0-255 (default: 140)
   CLAUDE_ITERM2_TAB_STATUS_COLOR_B          Flash color blue 0-255 (default: 0)
   CLAUDE_ITERM2_TAB_STATUS_INTERVAL         Flash interval seconds (default: 0.6)
+  CLAUDE_ITERM2_TAB_STATUS_FLASH_ENABLED    Enable/disable flash true/false (default: true)
   CLAUDE_ITERM2_TAB_STATUS_PREFIX_RUNNING   Running prefix (default: "⚡ ")
   CLAUDE_ITERM2_TAB_STATUS_PREFIX_IDLE      Idle prefix (default: "💤 ")
   CLAUDE_ITERM2_TAB_STATUS_PREFIX_ATTENTION Attention prefix (default: "🔴 ")
@@ -80,6 +81,7 @@ _DEFAULTS: dict[str, object] = {
     "color_g": 140,
     "color_b": 0,
     "interval": 0.6,
+    "flash_enabled": True,
     "badge_enabled": True,
     "badge": "⚠️ Needs input",
     "notify": False,
@@ -97,6 +99,7 @@ _ENV_MAP: dict[str, tuple[str, type]] = {
     "color_g": ("COLOR_G", int),
     "color_b": ("COLOR_B", int),
     "interval": ("INTERVAL", float),
+    "flash_enabled": ("FLASH_ENABLED", lambda v: v.lower() == "true"),
     "badge_enabled": ("BADGE_ENABLED", lambda v: v.lower() == "true"),
     "badge": ("BADGE", str),
     "notify": ("NOTIFY", lambda v: v.lower() == "true"),
@@ -767,6 +770,49 @@ async def main(connection: object) -> None:
                 set_state_prefix(clean, prefix)
             )
 
+    def _start_flash(claude_sid: str) -> None:
+        """Begin flashing a session's tab (idempotent)."""
+        info = active.get(claude_sid)
+        if not info or flasher.is_flashing(claude_sid):
+            return
+        flasher.start(claude_sid)
+        info["flash_task"] = asyncio.create_task(
+            _flash_loop(info["session"], info["snapshot"], claude_sid, flasher)
+        )
+
+    async def _stop_flash(claude_sid: str, restore_color: bool = False) -> None:
+        """Stop a session's flash loop, optionally restoring its tab color.
+
+        ``restore_color`` puts the tab color back to its captured value while
+        leaving the badge in place — used when the flash is turned off via
+        hot-reload but the session is still in the attention state.
+        """
+        info = active.get(claude_sid)
+        if not info:
+            return
+        flasher.stop(claude_sid)
+        task = info.get("flash_task")
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            info["flash_task"] = None
+        if restore_color:
+            snapshot = info["snapshot"]
+            change = iterm2.LocalWriteOnlyProfile()
+            change.set_use_tab_color(snapshot.use_tab_color)
+            if snapshot.tab_color is not None:
+                change.set_tab_color(
+                    iterm2.Color(
+                        snapshot.tab_color["red"],
+                        snapshot.tab_color["green"],
+                        snapshot.tab_color["blue"],
+                    )
+                )
+            await info["session"].async_set_profile_properties(change)  # type: ignore[union-attr]
+
     async def _enter_state(claude_sid: str, state: TabState, signal: dict) -> None:
         """Apply visual treatment for entering a state."""
         info = active[claude_sid]
@@ -782,11 +828,8 @@ async def main(connection: object) -> None:
                 badge_change.set_badge_text(CONFIG["badge"])
                 await info["session"].async_set_profile_properties(badge_change)  # type: ignore[union-attr]
 
-            flasher.start(claude_sid)
-            task = asyncio.create_task(
-                _flash_loop(info["session"], info["snapshot"], claude_sid, flasher)
-            )
-            info["flash_task"] = task
+            if CONFIG["flash_enabled"]:
+                _start_flash(claude_sid)
 
             project = signal.get("project", "")
             msg = signal.get("message", "Needs attention")
@@ -802,17 +845,23 @@ async def main(connection: object) -> None:
             return
         state = info.get("state")
         if state == TabState.ATTENTION:
-            flasher.stop(claude_sid)
-            task = info.get("flash_task")
-            if task:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                info["flash_task"] = None
+            await _stop_flash(claude_sid)
             # Restore tab color + badge
             await restore_snapshot(info["session"], info["snapshot"])
+
+    async def _reconcile_flash_enabled(enabled: bool) -> None:
+        """Apply a hot-reloaded ``flash_enabled`` change to active attention tabs.
+
+        Turning the flash off stops any in-progress flash and restores the tab
+        color immediately (the badge stays); turning it back on resumes flashing.
+        """
+        for claude_sid, info in list(active.items()):
+            if info.get("state") != TabState.ATTENTION:
+                continue
+            if enabled:
+                _start_flash(claude_sid)
+            else:
+                await _stop_flash(claude_sid, restore_color=True)
 
     async def apply_state(claude_sid: str, signal: dict) -> None:
         """Entry point for processing a signal. Handles new sessions and state transitions."""
@@ -890,6 +939,7 @@ async def main(connection: object) -> None:
     async def signal_watcher() -> None:
         prev_signals: dict[str, dict] = {}
         last_display_target = CONFIG["display_target"]
+        last_flash_enabled = CONFIG["flash_enabled"]
         while True:
             _check_config_reload()
             current_display_target = CONFIG["display_target"]
@@ -898,6 +948,10 @@ async def main(connection: object) -> None:
                     active, last_display_target, current_display_target, _set_tab_title
                 )
                 last_display_target = current_display_target
+            current_flash_enabled = CONFIG["flash_enabled"]
+            if current_flash_enabled != last_flash_enabled:
+                await _reconcile_flash_enabled(current_flash_enabled)
+                last_flash_enabled = current_flash_enabled
             try:
                 signals = read_signals(CONFIG["dir"])
                 current_sids = set(signals.keys())
