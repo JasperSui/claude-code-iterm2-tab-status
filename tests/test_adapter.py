@@ -859,3 +859,72 @@ class TestFlashEnabled:
 
         assert "_reconcile_flash_enabled(" in watcher
         assert "last_flash_enabled" in watcher
+
+
+class TestSignalStaleness:
+    """is_signal_stale() decides when a signal file should be reclaimed.
+
+    Covers the age-based expiry that fixes signals stuck "attention" after a
+    session moves on: the recorded PID is the long-lived login shell, so the
+    dead-PID path alone never reclaims them.
+    """
+
+    GRACE = claude_tab_status._PID_STALE_GRACE
+
+    def test_live_pid_past_max_age_is_stale(self):
+        # The fix: an un-refreshed signal expires even though its PID is alive.
+        sig = {"pid": "12345", "ts": "1000"}
+        assert claude_tab_status.is_signal_stale(
+            sig, now=1000 + 1801, max_age=1800, pid_alive=lambda _pid: True
+        )
+
+    def test_dead_pid_past_grace_is_stale(self):
+        # Preserves the original dead-PID cleanup (closed tabs).
+        sig = {"pid": "999999", "ts": "1000"}
+        assert claude_tab_status.is_signal_stale(
+            sig, now=1000 + self.GRACE + 1, max_age=1800, pid_alive=lambda _pid: False
+        )
+
+    def test_live_pid_within_max_age_is_not_stale(self):
+        sig = {"pid": "12345", "ts": "1000"}
+        assert not claude_tab_status.is_signal_stale(
+            sig, now=1000 + 60, max_age=1800, pid_alive=lambda _pid: True
+        )
+
+    def test_dead_pid_within_grace_is_not_stale(self):
+        sig = {"pid": "999999", "ts": "1000"}
+        assert not claude_tab_status.is_signal_stale(
+            sig, now=1000 + self.GRACE - 1, max_age=1800, pid_alive=lambda _pid: False
+        )
+
+    def test_max_age_zero_disables_age_expiry(self):
+        # Live PID, ancient signal, but age expiry off -> kept.
+        sig = {"pid": "12345", "ts": "1000"}
+        assert not claude_tab_status.is_signal_stale(
+            sig, now=1000 + 10_000_000, max_age=0, pid_alive=lambda _pid: True
+        )
+
+    def test_malformed_ts_is_not_stale(self):
+        sig = {"pid": "12345", "ts": "not-a-number"}
+        assert not claude_tab_status.is_signal_stale(
+            sig, now=9_999_999, max_age=1800, pid_alive=lambda _pid: True
+        )
+
+    def test_signal_max_age_has_config_default(self):
+        cfg = claude_tab_status.load_config("/nonexistent/path/config.json")
+        assert "signal_max_age" in cfg
+        assert isinstance(cfg["signal_max_age"], int)
+        assert cfg["signal_max_age"] > 0
+
+    def test_signal_max_age_overridable_via_env(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("CLAUDE_ITERM2_TAB_STATUS_SIGNAL_MAX_AGE", "120")
+        cfg = claude_tab_status.load_config("/nonexistent/path/config.json")
+        assert cfg["signal_max_age"] == 120
+
+    def test_signal_watcher_uses_is_signal_stale(self):
+        source = inspect.getsource(claude_tab_status.main)
+        watcher = source.split("    async def signal_watcher", 1)[1].split(
+            "    # Focus monitor", 1
+        )[0]
+        assert "is_signal_stale(" in watcher
+        assert 'CONFIG["signal_max_age"]' in watcher

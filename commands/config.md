@@ -20,6 +20,7 @@ Read the current config file at `~/.config/claude-tab-status/config.json` (creat
 | 12 | Sound file path | `sound` | (empty) |
 | 13 | Display target | `display_target` | title |
 | 14 | Subtitle activity source | `subtitle_activity_source` | off |
+| 15 | Signal max age (seconds) | `signal_max_age` | 1800 |
 
 Display all settings with their current effective values in a numbered table. Then ask the user which setting(s) they want to change. After they respond, update only the specified values and write the full config to `~/.config/claude-tab-status/config.json`. The adapter will hot-reload the changes within ~1 second.
 
@@ -30,3 +31,4 @@ Validation rules:
 - `display_target`: one of `title`, `subtitle`, or `both`
 - `subtitle_activity_source`: one of `off` or `prompt`; `prompt` appends a compact sanitized snippet to the subtitle and is opt-in because prompt text may be sensitive
 - `sound`: valid file path or empty string
+- `signal_max_age`: integer seconds; expire signals not refreshed within this window (guards against tabs stuck on a stale status); `0` or negative disables age-based expiry
