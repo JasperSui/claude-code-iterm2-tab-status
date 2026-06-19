@@ -116,7 +116,8 @@ Settings are stored in `~/.config/claude-tab-status/config.json`. Example with a
   "badge": "⚠️ Needs input",
   "badge_enabled": true,
   "notify": false,
-  "sound": ""
+  "sound": "",
+  "signal_max_age": 1800
 }
 ```
 
@@ -176,6 +177,7 @@ export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
 | `CLAUDE_ITERM2_TAB_STATUS_BADGE_ENABLED`    | `true`                   | Enable/disable badge (attention only)           |
 | `CLAUDE_ITERM2_TAB_STATUS_NOTIFY`           | `false`                  | macOS notification (attention only)             |
 | `CLAUDE_ITERM2_TAB_STATUS_SOUND`            | *(empty)*                | Sound file path (attention only)                |
+| `CLAUDE_ITERM2_TAB_STATUS_SIGNAL_MAX_AGE`   | `1800`                   | Reclaim signals not refreshed within N seconds (`0` disables) |
 | `CLAUDE_ITERM2_TAB_STATUS_LOG`              | `WARNING`                | Log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 
 </details>
@@ -185,6 +187,8 @@ export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
 **Tab doesn't show status** — Check that the iTerm2 Python Runtime is installed. Verify signal files are created: `ls "${XDG_RUNTIME_DIR:-$HOME/.cache}/claude-tab-status/"` after Claude goes idle. Set `export CLAUDE_ITERM2_TAB_STATUS_LOG=DEBUG` and check iTerm2's script console (Scripts → Manage → Console).
 
 **Wrong tab gets prefix** — The TTY in the signal file doesn't match the iTerm2 session. Restart iTerm2.
+
+**Tab stuck on a stale status** (e.g. still showing 🔴 attention after you've responded) — A signal is reclaimed when its PID dies, but the recorded PID is the long-lived login shell, so a signal left behind by a session that has moved on can persist while the tab stays open. The adapter also expires any signal not refreshed within `signal_max_age` seconds (default `1800`); lower it (e.g. `"signal_max_age": 600`) to clear stuck statuses sooner, or set `0` to disable age-based expiry.
 
 ## Contributing
 

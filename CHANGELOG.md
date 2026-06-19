@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **Tabs stuck on a stale status** (e.g. still flashing 🔴 attention after you've already responded). Signals were only reclaimed when their PID died, but `hook.sh` records the long-lived login-shell PID, so a signal left behind by a session that has moved on persisted for the life of the terminal tab — and PID reuse could leak orphans indefinitely.
+
+### Added
+- `signal_max_age` config (int seconds, default `1800`): expire any signal not refreshed within this window regardless of PID liveness; set `<= 0` to disable. Every hook event rewrites a signal's timestamp, so active sessions are never affected. New env var `CLAUDE_ITERM2_TAB_STATUS_SIGNAL_MAX_AGE`; hot-reloadable.
+
 ## 0.3.0 — 2026-05-31
 
 ### Added

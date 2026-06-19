@@ -38,6 +38,8 @@ Environment variables (all optional):
   CLAUDE_ITERM2_TAB_STATUS_BADGE_ENABLED    Enable/disable badge true/false (default: true)
   CLAUDE_ITERM2_TAB_STATUS_NOTIFY           macOS notification true/false (default: false)
   CLAUDE_ITERM2_TAB_STATUS_SOUND            Sound file path (default: "")
+  CLAUDE_ITERM2_TAB_STATUS_SIGNAL_MAX_AGE   Reclaim signals not refreshed within
+                                              N seconds, 0 disables (default: 1800)
   CLAUDE_ITERM2_TAB_STATUS_LOG              Log level (default: WARNING)
 """
 
@@ -88,6 +90,10 @@ _DEFAULTS: dict[str, object] = {
     "sound": "",
     "display_target": "title",
     "subtitle_activity_source": "off",
+    # Reclaim signals not refreshed within this many seconds, regardless of PID
+    # liveness (set <= 0 to disable age-based expiry). Guards against signals
+    # stuck after a session moves on, since the recorded PID is the login shell.
+    "signal_max_age": 1800,
 }
 
 _ENV_MAP: dict[str, tuple[str, type]] = {
@@ -106,6 +112,7 @@ _ENV_MAP: dict[str, tuple[str, type]] = {
     "sound": ("SOUND", str),
     "display_target": ("DISPLAY_TARGET", str),
     "subtitle_activity_source": ("SUBTITLE_ACTIVITY_SOURCE", str),
+    "signal_max_age": ("SIGNAL_MAX_AGE", int),
 }
 
 _DISPLAY_TARGETS = {"title", "subtitle", "both"}
@@ -278,6 +285,32 @@ def _is_pid_alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True  # process exists but we can't signal it
+
+
+def is_signal_stale(
+    sig: dict,
+    now: float,
+    max_age: int,
+    pid_alive: Callable[[int], bool] = _is_pid_alive,
+) -> bool:
+    """Return True if a signal file should be reclaimed.
+
+    A signal is stale when it has aged past ``max_age`` (set ``max_age <= 0`` to
+    disable age-based expiry). Age expiry is independent of PID liveness because
+    the recorded PID is the long-lived login shell, so a finished session's
+    signal (e.g. a stuck ``attention``) would otherwise never be reclaimed while
+    the terminal tab stays open. Every hook event rewrites the signal's ``ts``,
+    so an active session is never reclaimed by this path.
+    """
+    try:
+        pid = int(sig.get("pid", "0"))
+        ts = int(sig.get("ts", "0"))
+    except (ValueError, TypeError):
+        return False
+    age = now - ts
+    dead_pid = pid > 0 and age > _PID_STALE_GRACE and not pid_alive(pid)
+    too_old = max_age > 0 and age > max_age
+    return dead_pid or too_old
 
 
 # --- Snapshot ---
@@ -979,16 +1012,13 @@ async def main(connection: object) -> None:
                         await clear_session(sid)
                         remove_signal(CONFIG["dir"], sid)
 
-                # PID liveness: clean stale signals
+                # Clean stale signals: dead PID, or aged past signal_max_age
+                # (the recorded PID is the login shell, so age expiry is what
+                # reclaims signals stuck after a session moves on).
                 now = time.time()
                 for sid, sig in list(signals.items()):
-                    try:
-                        pid = int(sig.get("pid", "0"))
-                        ts = int(sig.get("ts", "0"))
-                    except (ValueError, TypeError):
-                        continue
-                    if pid > 0 and (now - ts) > _PID_STALE_GRACE and not _is_pid_alive(pid):
-                        log.info("Stale signal %s (PID %d dead), cleaning up", sid, pid)
+                    if is_signal_stale(sig, now, CONFIG["signal_max_age"]):
+                        log.info("Stale signal %s, cleaning up", sid)
                         await clear_session(sid)
                         remove_signal(CONFIG["dir"], sid)
 
