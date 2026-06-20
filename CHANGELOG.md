@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-06-20
 
 ### Fixed
 - **Tabs stuck on a stale status** (e.g. still flashing 🔴 attention after you've already responded). Signals were only reclaimed when their PID died, but `hook.sh` records the long-lived login-shell PID, so a signal left behind by a session that has moved on persisted for the life of the terminal tab — and PID reuse could leak orphans indefinitely.
