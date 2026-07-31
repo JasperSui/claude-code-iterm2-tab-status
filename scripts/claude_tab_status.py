@@ -646,8 +646,9 @@ async def _handle_display_target_change(
             tab = info.get("tab")
             try:
                 if tab:
-                    displayed = await tab.async_get_variable("title") or info["snapshot"].name
-                    await tab.async_set_title(strip_all_prefixes(displayed))
+                    # Drop our prefixed override, restoring whatever override
+                    # (usually none) the tab had before we touched it.
+                    await tab.async_set_title(info.get("orig_tab_title", ""))
                 else:
                     clean = strip_all_prefixes(info["snapshot"].name)
                     await info["session"].async_set_name(clean)  # type: ignore[union-attr]
@@ -786,13 +787,20 @@ async def main(connection: object) -> None:
         return None
 
     async def _set_tab_title(info: dict, prefix: str) -> None:
-        """Set tab title with given prefix."""
+        """Set tab title with given prefix.
+
+        The override is an iTerm2 *interpolated* string that references the
+        live session name, so titles set by the running application (e.g.
+        Claude Code's OSC 0 task summaries, which update continuously) keep
+        flowing into the tab title. Writing the literal title text instead
+        would freeze the tab at whatever the title happened to be at
+        state-change time — usually "Claude Code" from before the first
+        summary was generated.
+        """
         tab = info.get("tab")
         if tab:
             try:
-                displayed = await tab.async_get_variable("title") or info["snapshot"].name
-                clean = strip_all_prefixes(displayed)
-                await tab.async_set_title(set_state_prefix(clean, prefix))
+                await tab.async_set_title(prefix + r"\(currentSession.name)")
             except Exception:
                 log.debug("tab.async_set_title failed, falling back to session name")
                 tab = None
@@ -1027,6 +1035,21 @@ async def main(connection: object) -> None:
                 log.exception("Error in signal watcher")
             await asyncio.sleep(1)
 
+    # Heal stale title overrides left by previous adapter runs: a crash or
+    # iTerm2 restart loses the in-memory session map, so tabs can keep a
+    # prefixed override forever. Any tab still carrying one of our prefixes is
+    # unknown to this fresh instance — clear it; live sessions get re-applied
+    # by signal_watcher within a second.
+    async def cleanup_stale_overrides() -> None:
+        for w in app.terminal_windows:
+            for tab in w.tabs:
+                try:
+                    override = await tab.async_get_variable("titleOverrideFormat")
+                    if override and any(override.startswith(p) for p in ALL_PREFIXES):
+                        await tab.async_set_title("")
+                except Exception:
+                    log.debug("Startup override cleanup failed for a tab", exc_info=True)
+
     # Focus monitor: event-driven via iTerm2 FocusMonitor
     async def focus_monitor() -> None:
         async with iterm2.FocusMonitor(connection) as monitor:
@@ -1038,6 +1061,7 @@ async def main(connection: object) -> None:
                         focus_tracker.set_focused(session_id)
 
     # Run both concurrently
+    await cleanup_stale_overrides()
     await asyncio.gather(signal_watcher(), focus_monitor())
 
 

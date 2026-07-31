@@ -928,3 +928,39 @@ class TestSignalStaleness:
         )[0]
         assert "is_signal_stale(" in watcher
         assert 'CONFIG["signal_max_age"]' in watcher
+
+
+class TestLiveTabTitle:
+    """The tab title override must track the live session name, not freeze it.
+
+    Applications like Claude Code continuously retitle the session via OSC 0
+    (task summaries). Writing literal title text as the override freezes the
+    tab at state-change time; an interpolated reference keeps it live.
+    """
+
+    def test_set_tab_title_uses_interpolated_session_name(self):
+        source = inspect.getsource(claude_tab_status.main)
+        set_tab_title = source.split("    async def _set_tab_title", 1)[1].split(
+            "    def _start_flash", 1
+        )[0]
+
+        assert r"\(currentSession.name)" in set_tab_title
+        # The frozen-literal pattern must not come back
+        assert 'async_get_variable("title")' not in set_tab_title
+
+    def test_display_target_change_restores_original_override(self):
+        source = inspect.getsource(claude_tab_status._handle_display_target_change)
+
+        assert 'info.get("orig_tab_title", "")' in source
+        assert 'async_get_variable("title")' not in source
+
+    def test_main_cleans_stale_overrides_before_watching(self):
+        source = inspect.getsource(claude_tab_status.main)
+
+        assert "async def cleanup_stale_overrides" in source
+        assert "await cleanup_stale_overrides()" in source
+        cleanup = source.split("    async def cleanup_stale_overrides", 1)[1].split(
+            "    # Focus monitor", 1
+        )[0]
+        assert 'async_get_variable("titleOverrideFormat")' in cleanup
+        assert "override.startswith(p) for p in ALL_PREFIXES" in cleanup
