@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **AskUserQuestion prompts now trigger the 🔴 attention state.** Claude Code's interactive question dialog (the multiple-choice `AskUserQuestion` tool) emits no `Notification` event, so tabs previously stayed on ⚡ running while Claude silently waited for an answer. New `PreToolUse`/`PostToolUse` hooks (matcher `AskUserQuestion`) map question-shown → attention and question-answered → running, so questions behave like permission prompts — including the badge, macOS notification, and sound.
+
 ## 0.4.0 — 2026-06-20
 
 ### Fixed

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # claude-code-iterm2-tab-status unified hook
-# Handles both Notification and UserPromptSubmit events.
+# Handles Notification, UserPromptSubmit, and AskUserQuestion tool events.
 #   Notification(idle_prompt)       → writes signal with type "idle"
 #   Notification(permission_prompt) → writes signal with type "attention"
 #   UserPromptSubmit                → writes signal with type "running"
+#   PreToolUse(AskUserQuestion)     → writes signal with type "attention"
+#   PostToolUse(AskUserQuestion)    → writes signal with type "running"
 set -euo pipefail
 
 default_status_dir() {
@@ -139,6 +141,23 @@ if [[ "$HOOK_EVENT" == "UserPromptSubmit" ]]; then
   else
     ACTIVITY=""
   fi
+elif [[ "$HOOK_EVENT" == "PreToolUse" || "$HOOK_EVENT" == "PostToolUse" ]]; then
+  # AskUserQuestion tool (matched in hooks.json): the question dialog waits for
+  # the user just like a permission prompt, but emits no Notification event.
+  # Pre → attention (question shown), Post → running (answered, Claude resumes).
+  # Guard on tool_name so a broader matcher can't flip states on other tools.
+  TOOL_NAME="$(extract "tool_name")"
+  if [[ "$TOOL_NAME" != "AskUserQuestion" ]]; then
+    exit 0
+  fi
+  if [[ "$HOOK_EVENT" == "PreToolUse" ]]; then
+    SIGNAL_TYPE="attention"
+    MESSAGE="Claude is asking a question"
+  else
+    SIGNAL_TYPE="running"
+    MESSAGE=""
+  fi
+  ACTIVITY=""
 else
   # Notification event — map notification_type to signal type
   NOTIF_TYPE="$(extract "notification_type")"

@@ -228,6 +228,47 @@ else
   fail "Path traversal" "hook exited non-zero"
 fi
 
+# Test 15: PreToolUse(AskUserQuestion) → creates signal with type "attention"
+echo "Test 15: PreToolUse AskUserQuestion creates signal with type 'attention'"
+DIR15="$TMPDIR_BASE/t15"
+run_hook "$DIR15" '{"session_id":"ses-ask-pre","hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","cwd":"/proj"}'
+if [[ -f "$DIR15/ses-ask-pre.json" ]]; then
+  typ=$(read_field "$DIR15/ses-ask-pre.json" "type")
+  [[ "$typ" == "attention" ]] && pass "type is 'attention'" || fail "type" "expected 'attention', got '$typ'"
+  msg=$(read_field "$DIR15/ses-ask-pre.json" "message")
+  [[ -n "$msg" ]] && pass "message present: '$msg'" || fail "message" "expected non-empty message"
+else
+  fail "PreToolUse AskUserQuestion signal" "file not created"
+fi
+
+# Test 16: PostToolUse(AskUserQuestion) → creates signal with type "running"
+echo "Test 16: PostToolUse AskUserQuestion creates signal with type 'running'"
+DIR16="$TMPDIR_BASE/t16"
+run_hook "$DIR16" '{"session_id":"ses-ask-post","hook_event_name":"PostToolUse","tool_name":"AskUserQuestion","cwd":"/proj"}'
+if [[ -f "$DIR16/ses-ask-post.json" ]]; then
+  typ=$(read_field "$DIR16/ses-ask-post.json" "type")
+  [[ "$typ" == "running" ]] && pass "type is 'running'" || fail "type" "expected 'running', got '$typ'"
+else
+  fail "PostToolUse AskUserQuestion signal" "file not created"
+fi
+
+# Test 17: Pre/PostToolUse for other tools is ignored (defense in depth)
+echo "Test 17: PreToolUse for a different tool writes no signal"
+DIR17="$TMPDIR_BASE/t17"
+run_hook "$DIR17" '{"session_id":"ses-other-tool","hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/proj"}'
+count=$(find "$DIR17" -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
+[[ "$count" == "0" ]] && pass "no signal for non-AskUserQuestion tool" || fail "tool guard" "signal file created unexpectedly"
+
+# Test 18: Question lifecycle — attention on ask, running on answer
+echo "Test 18: Signal overwrite (attention → running) across a question"
+DIR18="$TMPDIR_BASE/t18"
+run_hook "$DIR18" '{"session_id":"ses-ask-cycle","hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","cwd":"/proj"}'
+typ=$(read_field "$DIR18/ses-ask-cycle.json" "type")
+[[ "$typ" == "attention" ]] && pass "attention while question is open" || fail "question open" "expected 'attention', got '$typ'"
+run_hook "$DIR18" '{"session_id":"ses-ask-cycle","hook_event_name":"PostToolUse","tool_name":"AskUserQuestion","cwd":"/proj"}'
+typ=$(read_field "$DIR18/ses-ask-cycle.json" "type")
+[[ "$typ" == "running" ]] && pass "running after answer" || fail "question answered" "expected 'running', got '$typ'"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
