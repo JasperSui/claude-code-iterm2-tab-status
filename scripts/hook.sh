@@ -6,7 +6,13 @@
 #   UserPromptSubmit                → writes signal with type "running"
 #   PreToolUse(AskUserQuestion)     → writes signal with type "attention"
 #   PostToolUse(AskUserQuestion)    → writes signal with type "running"
+#   PostToolUseFailure(AskUserQuestion) → writes signal with type "idle"
+#
+# Status reporting is advisory, so this hook must never influence Claude: a
+# PreToolUse hook's exit code feeds the permission pipeline, where exit 2 denies
+# the tool call. The trap forces 0 even if set -e trips; diagnostics go to stderr.
 set -euo pipefail
+trap 'exit 0' EXIT
 
 default_status_dir() {
   # Per-user directory so other local users cannot read signal files (which
@@ -141,22 +147,36 @@ if [[ "$HOOK_EVENT" == "UserPromptSubmit" ]]; then
   else
     ACTIVITY=""
   fi
-elif [[ "$HOOK_EVENT" == "PreToolUse" || "$HOOK_EVENT" == "PostToolUse" ]]; then
+elif [[ "$HOOK_EVENT" == "PreToolUse" || "$HOOK_EVENT" == "PostToolUse" ||
+        "$HOOK_EVENT" == "PostToolUseFailure" ]]; then
   # AskUserQuestion tool (matched in hooks.json): the question dialog waits for
   # the user just like a permission prompt, but emits no Notification event.
-  # Pre → attention (question shown), Post → running (answered, Claude resumes).
   # Guard on tool_name so a broader matcher can't flip states on other tools.
   TOOL_NAME="$(extract "tool_name")"
   if [[ "$TOOL_NAME" != "AskUserQuestion" ]]; then
     exit 0
   fi
-  if [[ "$HOOK_EVENT" == "PreToolUse" ]]; then
-    SIGNAL_TYPE="attention"
-    MESSAGE="Claude is asking a question"
-  else
-    SIGNAL_TYPE="running"
-    MESSAGE=""
-  fi
+  case "$HOOK_EVENT" in
+    PreToolUse)
+      # Question shown — Claude is blocked on the user.
+      SIGNAL_TYPE="attention"
+      MESSAGE="Claude is asking a question"
+      ;;
+    PostToolUse)
+      # Answered — Claude resumes.
+      SIGNAL_TYPE="running"
+      MESSAGE=""
+      ;;
+    *)
+      # Cancelled, timed out, or interrupted. PostToolUse only fires on success,
+      # so without this the attention signal would stick until the user focuses
+      # the tab or signal_max_age expires. "idle" is the safe landing state: an
+      # interrupted turn emits no Stop to correct a wrong "running", whereas a
+      # turn that does keep going ends in Stop → idle anyway.
+      SIGNAL_TYPE="idle"
+      MESSAGE=""
+      ;;
+  esac
   ACTIVITY=""
 else
   # Notification event — map notification_type to signal type

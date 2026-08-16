@@ -269,6 +269,48 @@ run_hook "$DIR18" '{"session_id":"ses-ask-cycle","hook_event_name":"PostToolUse"
 typ=$(read_field "$DIR18/ses-ask-cycle.json" "type")
 [[ "$typ" == "running" ]] && pass "running after answer" || fail "question answered" "expected 'running', got '$typ'"
 
+# Test 19: PostToolUseFailure(AskUserQuestion) → creates signal with type "idle".
+# PostToolUse only fires on success, so cancel/timeout/interrupt lands here.
+echo "Test 19: PostToolUseFailure AskUserQuestion creates signal with type 'idle'"
+DIR19="$TMPDIR_BASE/t19"
+run_hook "$DIR19" '{"session_id":"ses-ask-fail","hook_event_name":"PostToolUseFailure","tool_name":"AskUserQuestion","cwd":"/proj"}'
+if [[ -f "$DIR19/ses-ask-fail.json" ]]; then
+  typ=$(read_field "$DIR19/ses-ask-fail.json" "type")
+  [[ "$typ" == "idle" ]] && pass "type is 'idle'" || fail "type" "expected 'idle', got '$typ'"
+else
+  fail "PostToolUseFailure AskUserQuestion signal" "file not created"
+fi
+
+# Test 20: a cancelled question must not leave the tab stuck on attention
+echo "Test 20: Cancelled question clears attention (attention → idle)"
+DIR20="$TMPDIR_BASE/t20"
+run_hook "$DIR20" '{"session_id":"ses-ask-cancel","hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","cwd":"/proj"}'
+typ=$(read_field "$DIR20/ses-ask-cancel.json" "type")
+[[ "$typ" == "attention" ]] && pass "attention while question is open" || fail "question open" "expected 'attention', got '$typ'"
+run_hook "$DIR20" '{"session_id":"ses-ask-cancel","hook_event_name":"PostToolUseFailure","tool_name":"AskUserQuestion","cwd":"/proj"}'
+typ=$(read_field "$DIR20/ses-ask-cancel.json" "type")
+[[ "$typ" == "idle" ]] && pass "attention cleared after cancel" || fail "question cancelled" "expected 'idle', got '$typ'"
+
+# Test 21: PostToolUseFailure for a different tool is ignored
+echo "Test 21: PostToolUseFailure for a different tool writes no signal"
+DIR21="$TMPDIR_BASE/t21"
+run_hook "$DIR21" '{"session_id":"ses-fail-other","hook_event_name":"PostToolUseFailure","tool_name":"Bash","cwd":"/proj"}'
+count=$(find "$DIR21" -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
+[[ "$count" == "0" ]] && pass "no signal for non-AskUserQuestion tool" || fail "tool guard" "signal file created unexpectedly"
+
+# Test 22: the hook never exits non-zero — a PreToolUse hook exiting 2 would
+# deny the tool call, so a broken status dir must not block Claude's question.
+echo "Test 22: hook exits 0 even when the status dir cannot be written"
+DIR22="$TMPDIR_BASE/t22"
+mkdir -p "$DIR22"
+: > "$DIR22/blocked"  # a regular file where the hook expects a directory
+if echo '{"session_id":"ses-unwritable","hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","cwd":"/proj"}' \
+  | CLAUDE_ITERM2_TAB_STATUS_DIR="$DIR22/blocked" bash "$HOOK" 2>/dev/null; then
+  pass "exit 0 on unwritable status dir"
+else
+  fail "non-blocking exit" "hook exited non-zero (exit 2 would deny the tool call)"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

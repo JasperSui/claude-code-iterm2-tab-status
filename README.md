@@ -84,7 +84,7 @@ Prefer the prefix/badge without the color flash? Set `"flash_enabled": false` �
 Claude Code hooks → JSON signal file → iTerm2 adapter → tab status
 ```
 
-No screen scraping. Claude Code's official [hooks API](https://docs.anthropic.com/en/docs/claude-code/hooks) writes a signal file on every event. The unified hook handles `UserPromptSubmit` (→ running), `Notification` (→ idle/attention), and the `AskUserQuestion` tool via `PreToolUse`/`PostToolUse` (question shown → attention; answered → running). The iTerm2 adapter polls for signal files and sets the matching tab's prefix, color, and badge by TTY. Only the attention state flashes and shows a badge — running and idle are informational prefixes that persist.
+No screen scraping. Claude Code's official [hooks API](https://docs.anthropic.com/en/docs/claude-code/hooks) writes a signal file on every event. The unified hook handles `UserPromptSubmit` (→ running), `Notification` (→ idle/attention), and the `AskUserQuestion` tool via `PreToolUse`/`PostToolUse`/`PostToolUseFailure` (question shown → attention; answered → running; cancelled or timed out → idle). The iTerm2 adapter polls for signal files and sets the matching tab's prefix, color, and badge by TTY. Only the attention state flashes and shows a badge — running and idle are informational prefixes that persist.
 
 ## Configuration
 

@@ -94,7 +94,7 @@ if [[ -f "$HOOKS_JSON" ]]; then
   fi
 
   echo "Test: has required hook events"
-  for event in SessionStart Notification UserPromptSubmit Stop PreToolUse PostToolUse; do
+  for event in SessionStart Notification UserPromptSubmit Stop PreToolUse PostToolUse PostToolUseFailure; do
     has_event=$(python3 -c "import json; d=json.load(open('$HOOKS_JSON')); print('$event' in d.get('hooks', {}))" 2>/dev/null || echo "")
     if [[ "$has_event" == "True" ]]; then
       pass "has '$event' hook event"
