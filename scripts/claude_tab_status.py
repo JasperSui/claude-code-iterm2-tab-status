@@ -474,6 +474,25 @@ def set_state_prefix(name: str, prefix: str) -> str:
     return prefix + strip_all_prefixes(name)
 
 
+def is_plugin_tab_override(override: str) -> bool:
+    """Whether a tab title override was written by this plugin.
+
+    Empty prefixes are skipped: every string starts with ``""``, so a state the
+    user opted out of would otherwise match every tab and clear overrides this
+    plugin never set.
+    """
+    return bool(override) and any(override.startswith(p) for p in ALL_PREFIXES if p)
+
+
+def escape_interpolation(text: str) -> str:
+    """Quote ``text`` for literal use inside an iTerm2 interpolated string.
+
+    Backslash opens an escape sequence there, so an unescaped prefix containing
+    one (``\\(`` above all) would be evaluated as an expression instead of shown.
+    """
+    return text.replace("\\", "\\\\")
+
+
 _SUBTITLE_VARIABLE = "user.claudeStatus"
 _ACTIVITY_MAX_CHARS = 18
 _ACTIVITY_MAX_WORDS = 2
@@ -800,7 +819,7 @@ async def main(connection: object) -> None:
         tab = info.get("tab")
         if tab:
             try:
-                await tab.async_set_title(prefix + r"\(currentSession.name)")
+                await tab.async_set_title(escape_interpolation(prefix) + r"\(currentSession.name)")
             except Exception:
                 log.debug("tab.async_set_title failed, falling back to session name")
                 tab = None
@@ -963,11 +982,8 @@ async def main(connection: object) -> None:
         tab = info.get("tab")
         if tab:
             try:
-                orig = info.get("orig_tab_title", "")
-                if orig:
-                    await tab.async_set_title(orig)
-                else:
-                    await tab.async_set_title("")  # Clear override → back to default
+                # "" clears our override, putting the tab back on its default title.
+                await tab.async_set_title(info.get("orig_tab_title", ""))
             except Exception:
                 pass
         # If state was not attention, we also need to restore snapshot
@@ -1045,7 +1061,7 @@ async def main(connection: object) -> None:
             for tab in w.tabs:
                 try:
                     override = await tab.async_get_variable("titleOverrideFormat")
-                    if override and any(override.startswith(p) for p in ALL_PREFIXES):
+                    if is_plugin_tab_override(override or ""):
                         await tab.async_set_title("")
                 except Exception:
                     log.debug("Startup override cleanup failed for a tab", exc_info=True)

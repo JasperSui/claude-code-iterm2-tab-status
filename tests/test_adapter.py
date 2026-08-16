@@ -947,6 +947,8 @@ class TestLiveTabTitle:
         assert r"\(currentSession.name)" in set_tab_title
         # The frozen-literal pattern must not come back
         assert 'async_get_variable("title")' not in set_tab_title
+        # The prefix is user config landing in an interpolated string
+        assert "escape_interpolation(prefix)" in set_tab_title
 
     def test_display_target_change_restores_original_override(self):
         source = inspect.getsource(claude_tab_status._handle_display_target_change)
@@ -963,4 +965,46 @@ class TestLiveTabTitle:
             "    # Focus monitor", 1
         )[0]
         assert 'async_get_variable("titleOverrideFormat")' in cleanup
-        assert "override.startswith(p) for p in ALL_PREFIXES" in cleanup
+        assert "is_plugin_tab_override(" in cleanup
+
+    def test_clear_session_restores_original_override(self):
+        source = inspect.getsource(claude_tab_status.main)
+        clear_session = source.split("    async def clear_session", 1)[1].split(
+            "    # Signal watcher", 1
+        )[0]
+
+        assert 'async_set_title(info.get("orig_tab_title", ""))' in clear_session
+
+
+class TestIsPluginTabOverride:
+    """Only overrides this plugin actually wrote may be cleared at startup."""
+
+    def test_matches_our_prefixed_overrides(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(claude_tab_status, "ALL_PREFIXES", ["⚡ ", "💤 ", "🔴 "])
+
+        assert claude_tab_status.is_plugin_tab_override("⚡ Claude Code")
+        assert claude_tab_status.is_plugin_tab_override("💤 ⠂ Claude Code")
+
+    def test_ignores_foreign_and_empty_overrides(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(claude_tab_status, "ALL_PREFIXES", ["⚡ ", "💤 ", "🔴 "])
+
+        assert not claude_tab_status.is_plugin_tab_override("")
+        assert not claude_tab_status.is_plugin_tab_override(r"\(currentSession.name) — prod")
+
+    def test_empty_prefix_does_not_match_every_override(self, monkeypatch: pytest.MonkeyPatch):
+        """An opted-out state must not turn the startup cleanup into a wipe-all."""
+        monkeypatch.setattr(claude_tab_status, "ALL_PREFIXES", ["⚡ ", "", "🔴 "])
+
+        assert not claude_tab_status.is_plugin_tab_override("my own tab title")
+        # The states still carrying a prefix keep matching
+        assert claude_tab_status.is_plugin_tab_override("⚡ Claude Code")
+
+
+class TestEscapeInterpolation:
+    """Prefixes are user config and land inside an iTerm2 interpolated string."""
+
+    def test_leaves_ordinary_prefixes_untouched(self):
+        assert claude_tab_status.escape_interpolation("⚡ ") == "⚡ "
+
+    def test_escapes_backslashes_so_prefixes_are_not_evaluated(self):
+        assert claude_tab_status.escape_interpolation(r"\(pid) ") == r"\\(pid) "
