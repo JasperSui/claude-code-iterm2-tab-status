@@ -949,6 +949,17 @@ class TestLiveTabTitle:
         assert 'async_get_variable("title")' not in set_tab_title
         # The prefix is user config landing in an interpolated string
         assert "escape_interpolation(prefix)" in set_tab_title
+        # A user's own title format is kept as the base, not discarded
+        assert 'info.get("orig_tab_title") or r"\\(currentSession.name)"' in set_tab_title
+
+    def test_capture_rejects_our_own_override_as_original(self):
+        """Split panes share a tab, so the captured override may be ours."""
+        source = inspect.getsource(claude_tab_status.main)
+        apply_state = source.split("    async def apply_state", 1)[1].split(
+            "    async def clear_session", 1
+        )[0]
+
+        assert "is_plugin_tab_override(orig_tab_title)" in apply_state
 
     def test_display_target_change_restores_original_override(self):
         source = inspect.getsource(claude_tab_status._handle_display_target_change)
@@ -998,6 +1009,18 @@ class TestIsPluginTabOverride:
         assert not claude_tab_status.is_plugin_tab_override("my own tab title")
         # The states still carrying a prefix keep matching
         assert claude_tab_status.is_plugin_tab_override("⚡ Claude Code")
+
+    def test_matches_an_override_layered_on_a_custom_format(self, monkeypatch: pytest.MonkeyPatch):
+        """What a split pane sees is our prefix on top of the user's own format."""
+        monkeypatch.setattr(claude_tab_status, "ALL_PREFIXES", ["⚡ ", "💤 ", "🔴 "])
+
+        assert claude_tab_status.is_plugin_tab_override(r"⚡ \(currentSession.name) — prod")
+
+    def test_matches_the_escaped_form_that_gets_written(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(claude_tab_status, "ALL_PREFIXES", [r"\(pid) "])
+        written = claude_tab_status.escape_interpolation(r"\(pid) ") + "Claude Code"
+
+        assert claude_tab_status.is_plugin_tab_override(written)
 
 
 class TestEscapeInterpolation:

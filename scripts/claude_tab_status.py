@@ -474,16 +474,6 @@ def set_state_prefix(name: str, prefix: str) -> str:
     return prefix + strip_all_prefixes(name)
 
 
-def is_plugin_tab_override(override: str) -> bool:
-    """Whether a tab title override was written by this plugin.
-
-    Empty prefixes are skipped: every string starts with ``""``, so a state the
-    user opted out of would otherwise match every tab and clear overrides this
-    plugin never set.
-    """
-    return bool(override) and any(override.startswith(p) for p in ALL_PREFIXES if p)
-
-
 def escape_interpolation(text: str) -> str:
     """Quote ``text`` for literal use inside an iTerm2 interpolated string.
 
@@ -491,6 +481,19 @@ def escape_interpolation(text: str) -> str:
     one (``\\(`` above all) would be evaluated as an expression instead of shown.
     """
     return text.replace("\\", "\\\\")
+
+
+def is_plugin_tab_override(override: str) -> bool:
+    """Whether a tab title override was written by this plugin.
+
+    Matches the escaped prefix because that is what gets written out. Empty
+    prefixes are skipped: every string starts with ``""``, so a state the user
+    opted out of would otherwise match every tab and claim overrides this
+    plugin never set.
+    """
+    return bool(override) and any(
+        override.startswith(escape_interpolation(p)) for p in ALL_PREFIXES if p
+    )
 
 
 _SUBTITLE_VARIABLE = "user.claudeStatus"
@@ -815,11 +818,15 @@ async def main(connection: object) -> None:
         would freeze the tab at whatever the title happened to be at
         state-change time — usually "Claude Code" from before the first
         summary was generated.
+
+        The prefix is applied on top of the tab's own override when it had one,
+        so a user's custom title format survives for the session's lifetime.
         """
         tab = info.get("tab")
         if tab:
             try:
-                await tab.async_set_title(escape_interpolation(prefix) + r"\(currentSession.name)")
+                base = info.get("orig_tab_title") or r"\(currentSession.name)"
+                await tab.async_set_title(escape_interpolation(prefix) + base)
             except Exception:
                 log.debug("tab.async_set_title failed, falling back to session name")
                 tab = None
@@ -943,6 +950,11 @@ async def main(connection: object) -> None:
             if tab:
                 try:
                     orig_tab_title = await tab.async_get_variable("titleOverrideFormat") or ""
+                    # A split pane sharing this tab may already carry our own
+                    # override; adopting it would stack prefixes and later
+                    # "restore" it as if the user had set it.
+                    if is_plugin_tab_override(orig_tab_title):
+                        orig_tab_title = ""
                 except Exception:
                     tab = None
 
