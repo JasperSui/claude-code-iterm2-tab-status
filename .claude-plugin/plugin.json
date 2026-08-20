@@ -1,7 +1,7 @@
 {
   "name": "iterm2-tab-status",
   "description": "Show iTerm2 tab status (running/idle/attention) for Claude Code sessions",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "author": {
     "name": "Jasper Sui"
   },
