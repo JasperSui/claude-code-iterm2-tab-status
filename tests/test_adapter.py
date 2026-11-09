@@ -118,6 +118,39 @@ class TestSnapshot:
         assert a == b
 
 
+class TestSnapshotName:
+    @pytest.mark.asyncio
+    async def test_capture_uses_auto_name_format_not_rendered_name(self):
+        session = MagicMock()
+        profile = MagicMock(tab_color=None, use_tab_color=False, badge_text="")
+        session.async_get_profile = AsyncMock(return_value=profile)
+
+        async def var(name):
+            return {"name": "it-tool (claude)", "autoNameFormat": "it-tool"}.get(name)
+
+        session.async_get_variable = var
+        snap = await claude_tab_status.capture_snapshot(session)
+        assert snap.name == "it-tool"
+
+    @pytest.mark.asyncio
+    async def test_restore_does_not_rename_untouched_session(self):
+        session = MagicMock()
+        session.async_set_profile_properties = AsyncMock()
+        session.async_set_name = AsyncMock()
+        snap = claude_tab_status.Snapshot(None, False, "it-tool", "", True)
+        await claude_tab_status.restore_snapshot(session, snap)
+        session.async_set_name.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_restore_renames_when_adapter_changed_name(self):
+        session = MagicMock()
+        session.async_set_profile_properties = AsyncMock()
+        session.async_set_name = AsyncMock()
+        snap = claude_tab_status.Snapshot(None, False, "it-tool", "", True, name_changed=True)
+        await claude_tab_status.restore_snapshot(session, snap)
+        session.async_set_name.assert_awaited_once_with("it-tool")
+
+
 # --- TestMatchSession ---
 
 
