@@ -325,6 +325,10 @@ class Snapshot:
     name: str
     badge_text: str
     allow_title_setting: bool
+    # True once the adapter itself renamed the session (no-tab fallback).
+    # restore_snapshot only writes the name back in that case; an unconditional
+    # async_set_name makes iTerm2 treat the name as manually set (title freezes).
+    name_changed: bool = False
 
 
 async def capture_snapshot(session: object) -> Snapshot:
@@ -341,7 +345,10 @@ async def capture_snapshot(session: object) -> Snapshot:
         if tc
         else None,
         use_tab_color=bool(profile.use_tab_color),
-        name=await session.async_get_variable("name") or "",  # type: ignore[union-attr]
+        # autoNameFormat, not "name": "name" is the rendered title and already
+        # includes title components such as "(claude)" (Job), which would stack
+        # on every restore.
+        name=await session.async_get_variable("autoNameFormat") or "",  # type: ignore[union-attr]
         badge_text=profile.badge_text or "",
         allow_title_setting=bool(getattr(profile, "allow_title_setting", True)),
     )
@@ -363,7 +370,9 @@ async def restore_snapshot(session: object, snapshot: Snapshot) -> None:
         )
     change.set_badge_text(snapshot.badge_text)
     await session.async_set_profile_properties(change)  # type: ignore[union-attr]
-    await session.async_set_name(snapshot.name)  # type: ignore[union-attr]
+    if snapshot.name_changed:
+        await session.async_set_name(snapshot.name)  # type: ignore[union-attr]
+        snapshot.name_changed = False
 
 
 # --- Session Matching ---
@@ -673,6 +682,7 @@ async def _handle_display_target_change(
                     await tab.async_set_title(info.get("orig_tab_title", ""))
                 else:
                     clean = strip_all_prefixes(info["snapshot"].name)
+                    info["snapshot"].name_changed = True
                     await info["session"].async_set_name(clean)  # type: ignore[union-attr]
             except Exception:
                 log.debug("Failed to clear title prefix on display_target change")
@@ -833,6 +843,7 @@ async def main(connection: object) -> None:
                 info["tab"] = None
         if not tab:
             clean = strip_all_prefixes(info["snapshot"].name)
+            info["snapshot"].name_changed = True
             await info["session"].async_set_name(  # type: ignore[union-attr]
                 set_state_prefix(clean, prefix)
             )
